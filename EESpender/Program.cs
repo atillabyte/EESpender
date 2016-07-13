@@ -40,8 +40,16 @@ namespace EESpender2
 
         static void Main(string[] args)
         {
-            System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
+            var started = DateTime.UtcNow;
+            new System.Timers.Timer(1000) { Enabled = true }.Elapsed += (sender, eventargs) => {
+                if (DateTime.UtcNow > started.AddMinutes(1)) {
+                    Log(Severity.Error, "Application took too long and was terminated.");
+                    Environment.Exit(-1);
+                }
+            };
 
+            System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
+        
             var required = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
             foreach (var message in required)
                 Series.Add(new Function()
