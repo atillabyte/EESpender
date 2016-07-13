@@ -192,7 +192,7 @@ namespace EESpender2
 
             try
             {
-                format = JsonConvert.DeserializeObject(client.DownloadString("https://gist.githubusercontent.com/atillabyte/91bb080002b0e09ba3c8e9333fd11909/raw/shopformat.json"));
+                format = JsonConvert.DeserializeObject(client.DownloadString("https://raw.githubusercontent.com/atillabyte/EESpender/master/Assets/shop.json"));
 
                 if (!File.Exists("shop.json"))
                     File.WriteAllText("shop.json", format.ToString());
