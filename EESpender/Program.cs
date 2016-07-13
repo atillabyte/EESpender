@@ -186,7 +186,6 @@ namespace EESpender2
 
         public Shop(Message e)
         {
-            File.WriteAllText(@"X:\outshop.txt", e.ToString());
             var client = new System.Net.WebClient() { Proxy = null };
             dynamic format;
 
