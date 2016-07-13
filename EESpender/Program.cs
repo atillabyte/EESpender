@@ -40,6 +40,8 @@ namespace EESpender2
 
         static void Main(string[] args)
         {
+            System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
+
             var required = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
             foreach (var message in required)
                 Series.Add(new Function()
@@ -166,7 +168,7 @@ namespace EESpender2
             var output = string.Format("[{0}] [{1:G}] {2}", severity.ToString().ToUpper(), DateTime.Now, message);
 
             Directory.CreateDirectory("logs");
-            using (StreamWriter w = File.AppendText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToShortDateString() }.txt"))
+            using (StreamWriter w = File.AppendText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToString("MM_dd_yy") }.txt"))
             {
                 w.WriteLine(output + "\n");
                 w.Flush();
