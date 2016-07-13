@@ -40,13 +40,17 @@ namespace EESpender2
 
         static void Main(string[] args)
         {
-            var started = DateTime.UtcNow;
-            new System.Timers.Timer(1000) { Enabled = true }.Elapsed += (sender, eventargs) => {
-                if (DateTime.UtcNow > started.AddMinutes(1)) {
-                    Log(Severity.Error, "Application took too long and was terminated.");
-                    Environment.Exit(-1);
-                }
-            };
+            new Thread(() => {
+                var started = DateTime.UtcNow;
+                new System.Timers.Timer(1000) { Enabled = true }.Elapsed += (sender, eventargs) => {
+                    if (DateTime.UtcNow > started.AddMinutes(1))
+                    {
+                        Log(Severity.Error, "Application took too long and was terminated.");
+                        Environment.Exit(-1);
+                    }
+                };
+            }) { IsBackground = true }.Start();
+
 
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
         
