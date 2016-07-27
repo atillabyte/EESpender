@@ -24,17 +24,15 @@ namespace EESpender2
             public Shop CurrentShop { get; set; }
         }
 
-        static bool HasRestarted = false;
         static void Main(string[] args)
         {
-            if (!HasRestarted) {
-                EasyTimer.SetTimeout(() => {
-                    Log(Severity.Error, "Application took too long and was terminated.");
-                    Environment.Exit(-1);
-                }, 1000 * 60);
-            }
+            EasyTimer.SetTimeout(() => {
+                Log(Severity.Error, "Application took too long and was terminated.");
+                Environment.Exit(-1);
+            }, 1000 * 60);
 
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
+            System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
 
             var required = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
 
@@ -48,16 +46,16 @@ namespace EESpender2
             Log(Severity.Info, "EESpender Started.");
 
             var complete = false;
-
             Lobby.OnMessage += (s, message) => {
                 Messages.Add(message);
 
                 if (message.Type == "connectioncomplete") {
-                    foreach (var m in required)
-                        EasyTimer.SetInterval(new Action(() => {
+                    EasyTimer.SetInterval(new Action(() => {
+                        foreach (var m in required) {
                             if (!Messages.Any(x => x.Type == m))
                                 Lobby.Send(m);
-                        }), 1000);
+                        }
+                    }), 2500);
                 }
 
                 if (message.Type == "getLobbyProperties") {
@@ -99,19 +97,7 @@ namespace EESpender2
                 }
             }, 1500);
 
-            Lobby.OnDisconnect += (s, message) => {
-                Log(Severity.Error, "Disconnected. " + message);
-                Reconnect(args);
-            };
-
-            Console.ReadLine();
-        }
-
-        private static void Reconnect(string[] args)
-        {
-            Log(Severity.Error, "Reconnecting");
-            HasRestarted = true;
-            Main(args);
+            System.Threading.Thread.Sleep(-1);
         }
 
         public enum Severity { Info = 0, Warning = 1, Error = 2 }
