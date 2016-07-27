@@ -3,11 +3,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Timers;
-using System.Threading;
 using Newtonsoft.Json;
 using Rabbit;
-using Rabbit.EE;
 
 namespace EESpender2
 {
@@ -15,19 +12,8 @@ namespace EESpender2
     {
         static Client Client { get; set; }
         static Connection Lobby { get; set; }
-
-        static bool Ready = false;
-        static bool Connected => Ready && Lobby.Connected && Lobby != null && Messages.Any(x => x.Type == "connectioncomplete");
-        enum Status { Incomplete = 0, Complete = 1 };
-        static System.Timers.Timer Timer;
         static List<Message> Messages { get; set; } = new List<Message>();
-        static List<Function> Series = new List<Function>();
-        class Function
-        {
-            public string Tag { get; set; }
-            public Status Status { get; set; } = Status.Incomplete;
-            public Func<Status> Func { get; set; }
-        }
+
         class Profile
         {
             public string UsernameOrEmail { get; set; }
@@ -38,120 +24,43 @@ namespace EESpender2
             public Shop CurrentShop { get; set; }
         }
 
+        static bool HasRestarted = false;
         static void Main(string[] args)
         {
-            new Thread(() => {
-                var started = DateTime.UtcNow;
-                new System.Timers.Timer(1000) { Enabled = true }.Elapsed += (sender, eventargs) => {
-                    if (DateTime.UtcNow > started.AddMinutes(1))
-                    {
-                        Log(Severity.Error, "Application took too long and was terminated.");
-                        Environment.Exit(-1);
-                    }
-                };
-            }) { IsBackground = true }.Start();
-
+            if (!HasRestarted) {
+                EasyTimer.SetTimeout(() => {
+                    Log(Severity.Error, "Application took too long and was terminated.");
+                    Environment.Exit(-1);
+                }, 1000 * 60);
+            }
 
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
-        
+
             var required = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
-            foreach (var message in required)
-                Series.Add(new Function()
-                {
-                    Tag = message,
-                    Func = new Func<Status>(() =>
-                    {
-                        while (!Messages.Any(x => x.Type == message))
-                        {
-                            if (!Connected)
-                                return Status.Incomplete;
 
-                            Lobby.Send(message);
-                            Thread.Sleep(1000);
-                        }
-
-                        return Status.Complete;
-                    })
-                });
+            if (args == null || args.ToList().Count() == 0) {
+                Log(Severity.Error, "Unspecified account arguments.");
+                throw new ArgumentNullException();
+            }
 
             Client = new RabbitAuth().LogOn("everybody-edits-su9rn58o40itdbnw69plyw", args[0], args[1]);
             Lobby = Client.Multiplayer.CreateJoinRoom(Client.ConnectUserId, $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
-            Log(Severity.Info, "Started.");
+            Log(Severity.Info, "EESpender Started.");
 
-            Lobby.OnMessage += (s, message) =>
-            {
+            var complete = false;
+
+            Lobby.OnMessage += (s, message) => {
                 Messages.Add(message);
 
-                if (message.Type == "connectioncomplete")
-                {
-                    Ready = true;
-
-                    Timer = new System.Timers.Timer(1500) { AutoReset = true, Enabled = false };
-                    Timer.Elapsed += (s2, e) =>
-                    {
-                        if (Ready && Connected)
-                        {
-                            var functions = Series.Where(x => x.Status == Status.Incomplete);
-
-                            if (functions.Count() > 0)
-                            {
-                                foreach (var function in functions)
-                                {
-                                    if (!Connected)
-                                        break;
-
-                                    var status = function.Func.Invoke();
-                                    if (status == Status.Incomplete)
-                                        Log(Severity.Warning, $"Function has terminated unsuccessfully. ({function.Tag})");
-
-                                    function.Status = status;
-                                    Thread.Sleep(1000);
-                                }
-                            }
-                            else
-                            {
-                                Timer.Stop();
-
-                                var shop = new Shop(Messages.First(x => x.Type == "getShop"));
-
-                                var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0).Where(x => x.Price > 0)
-                                    .OrderByDescending(x => x.Price).OrderByDescending(x => x.EnergySpent).OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Price).Reverse().ToList();
-
-                                if (priority.Count() == 0)
-                                    priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.OwnedAmount > 0 && x.Price > 0) };
-
-                                Log(Severity.Info, "Username: " + Messages.FirstOrDefault(x => x.Type == "getMySimplePlayerObject")[0]);
-                                Log(Severity.Info, "Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
-                                Log(Severity.Info, "Current Energy: " + shop.CurrentEnergy);
-                                Log(Severity.Info, "Maximum Energy: " + shop.MaximumEnergy);
-
-                                if (shop.CurrentEnergy >= priority[0].EnergyPerClick)
-                                {
-                                    Log(Severity.Info, string.Format("Spending {0} energy on {1}",
-                                                        priority[0].EnergyPerClick * (Math.Floor((double)shop.CurrentEnergy / priority[0].EnergyPerClick)),
-                                                        priority[0].SafeName));
-
-                                    Lobby.Send("useAllEnergy", priority[0].Name);
-                                }
-                                else
-                                {
-                                    Log(Severity.Info, "Nothing to spend energy on.");
-                                    Environment.Exit(0);
-                                }
-                            }
-                        }
-                        else {
-                            Reconnect();
-                        }
-                    };
-                    Timer.Start();
+                if (message.Type == "connectioncomplete") {
+                    foreach (var m in required)
+                        EasyTimer.SetInterval(new Action(() => {
+                            if (!Messages.Any(x => x.Type == m))
+                                Lobby.Send(m);
+                        }), 1000);
                 }
-                if (message.Type == "useEnergy" || message.Type == "useAllEnergy")
-                {
-                    Lobby.Send("getShop");
-                }
-                if (message.Type == "getLobbyProperties")
-                {
+
+                if (message.Type == "getLobbyProperties") {
                     var FirstDailyLogin = (bool)message[0];
                     var LoginStreak = (int)message[1];
 
@@ -161,17 +70,48 @@ namespace EESpender2
                 }
             };
 
-            Lobby.OnDisconnect += (s, message) =>
-            {
+            EasyTimer.SetInterval(() => {
+                if (required.All(x => Messages.Select(m => m.Type).Contains(x)) && !complete) {
+                    complete = true;
+
+                    var shop = new Shop(Messages.First(x => x.Type == "getShop"));
+
+                    var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0).Where(x => x.Price > 0)
+                        .OrderByDescending(x => x.Price).OrderByDescending(x => x.EnergySpent).OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Price).Reverse().ToList();
+
+                    if (priority.Count() == 0)
+                        priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.OwnedAmount > 0 && x.Price > 0) };
+
+                    Log(Severity.Info, "Username: " + Messages.FirstOrDefault(x => x.Type == "getMySimplePlayerObject")[0]);
+                    Log(Severity.Info, "Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
+                    Log(Severity.Info, "Current Energy: " + shop.CurrentEnergy);
+                    Log(Severity.Info, "Maximum Energy: " + shop.MaximumEnergy);
+
+                    if (shop.CurrentEnergy >= priority[0].EnergyPerClick) {
+                        Log(Severity.Info, string.Format("Spending {0} energy on {1}",
+                                            priority[0].EnergyPerClick * (Math.Floor((double)shop.CurrentEnergy / priority[0].EnergyPerClick)),
+                                            priority[0].SafeName));
+
+                        Lobby.Send("useAllEnergy", priority[0].Name);
+                    }
+
+                    EasyTimer.SetTimeout(() => { Environment.Exit(0); }, 1000);
+                }
+            }, 1500);
+
+            Lobby.OnDisconnect += (s, message) => {
                 Log(Severity.Error, "Disconnected. " + message);
+                Reconnect(args);
             };
 
             Console.ReadLine();
         }
 
-        private static void Reconnect()
+        private static void Reconnect(string[] args)
         {
-            Main(new string[] { });
+            Log(Severity.Error, "Reconnecting");
+            HasRestarted = true;
+            Main(args);
         }
 
         public enum Severity { Info = 0, Warning = 1, Error = 2 }
@@ -180,14 +120,35 @@ namespace EESpender2
             var output = string.Format("[{0}] [{1:G}] {2}", severity.ToString().ToUpper(), DateTime.Now, message);
 
             Directory.CreateDirectory("logs");
-            using (StreamWriter w = File.AppendText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToString("MM_dd_yy") }.txt"))
-            {
-                w.WriteLine(output + "\n");
-                w.Flush();
-                w.Close();
-            }
+            File.AppendAllText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToString("MM_dd_yy") }.txt", output + "\n");
 
             Console.WriteLine(output);
+        }
+    }
+
+    public static class EasyTimer
+    {
+        public static IDisposable SetInterval(Action method, int delayInMilliseconds)
+        {
+            System.Timers.Timer timer = new System.Timers.Timer(delayInMilliseconds);
+            timer.Elapsed += (source, e) => method();
+
+            timer.Enabled = true;
+            timer.Start();
+
+            return timer as IDisposable;
+        }
+
+        public static IDisposable SetTimeout(Action method, int delayInMilliseconds)
+        {
+            System.Timers.Timer timer = new System.Timers.Timer(delayInMilliseconds);
+            timer.Elapsed += (source, e) => method();
+
+            timer.AutoReset = false;
+            timer.Enabled = true;
+            timer.Start();
+
+            return timer as IDisposable;
         }
     }
 
