@@ -14,22 +14,12 @@ namespace EESpender2
         static Connection Lobby { get; set; }
         static List<Message> Messages { get; set; } = new List<Message>();
 
-        class Profile
-        {
-            public string UsernameOrEmail { get; set; }
-            public string PasswordOrAuth { get; set; }
-
-            public int LoginStreak { get; set; }
-            public bool FirstDailyLogin { get; set; }
-            public Shop CurrentShop { get; set; }
-        }
-
         static void Main(string[] args)
         {
             EasyTimer.SetTimeout(() => {
                 Log(Severity.Error, "Application took too long and was terminated.");
                 Environment.Exit(-1);
-            }, 1000 * 60);
+            }, 1000 * 30);
 
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
             System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
@@ -38,14 +28,13 @@ namespace EESpender2
 
             if (args == null || args.ToList().Count() == 0) {
                 Log(Severity.Error, "Unspecified account arguments.");
-                throw new ArgumentNullException();
+                throw new ArgumentException();
             }
 
             Client = new RabbitAuth().LogOn("everybody-edits-su9rn58o40itdbnw69plyw", args[0], args[1]);
             Lobby = Client.Multiplayer.CreateJoinRoom(Client.ConnectUserId, $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
             Log(Severity.Info, "EESpender Started.");
 
-            var complete = false;
             Lobby.OnMessage += (s, message) => {
                 Messages.Add(message);
 
@@ -55,27 +44,17 @@ namespace EESpender2
                             if (!Messages.Any(x => x.Type == m))
                                 Lobby.Send(m);
                         }
-                    }), 2500);
-                }
-
-                if (message.Type == "getLobbyProperties") {
-                    var FirstDailyLogin = (bool)message[0];
-                    var LoginStreak = (int)message[1];
-
-                    if (FirstDailyLogin && LoginStreak >= 0)
-                        for (uint i = 2; i < message.Count; i += 2)
-                            Log(Severity.Info, $"Login Streak. (reward: {message[i + 1]} {message[i]})");
+                    }), 2000);
                 }
             };
 
             EasyTimer.SetInterval(() => {
-                if (required.All(x => Messages.Select(m => m.Type).Contains(x)) && !complete) {
-                    complete = true;
+                if (required.All(x => Messages.Select(m => m.Type).Contains(x))) {
 
                     var shop = new Shop(Messages.First(x => x.Type == "getShop"));
 
-                    var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0).Where(x => x.Price > 0)
-                        .OrderByDescending(x => x.Price).OrderByDescending(x => x.EnergySpent).OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Price).Reverse().ToList();
+                    var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0 && x.Price > 0).OrderByDescending(x => x.Price - x.EnergySpent)
+                                   .OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Name.Contains("world")).Reverse().ToList();
 
                     if (priority.Count() == 0)
                         priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.OwnedAmount > 0 && x.Price > 0) };
@@ -85,6 +64,15 @@ namespace EESpender2
                     Log(Severity.Info, "Current Energy: " + shop.CurrentEnergy);
                     Log(Severity.Info, "Maximum Energy: " + shop.MaximumEnergy);
 
+                    foreach(var message in Messages.Where(x => x.Type == "getLobbyProperties")) {
+                        var FirstDailyLogin = (bool)message[0];
+                        var LoginStreak = (int)message[1];
+
+                        if (FirstDailyLogin && LoginStreak >= 0)
+                            for (uint i = 2; i < message.Count; i += 2)
+                                Log(Severity.Info, $"Login Streak (#{LoginStreak}). (reward: {message[i + 1]} {message[i]})");
+                    }
+
                     if (shop.CurrentEnergy >= priority[0].EnergyPerClick) {
                         Log(Severity.Info, string.Format("Spending {0} energy on {1}",
                                             priority[0].EnergyPerClick * (Math.Floor((double)shop.CurrentEnergy / priority[0].EnergyPerClick)),
@@ -93,9 +81,10 @@ namespace EESpender2
                         Lobby.Send("useAllEnergy", priority[0].Name);
                     }
 
-                    EasyTimer.SetTimeout(() => { Environment.Exit(0); }, 1000);
+                    Log(Severity.Info, "Done.");
+                    Environment.Exit(0);
                 }
-            }, 1500);
+            }, 5000);
 
             System.Threading.Thread.Sleep(-1);
         }
@@ -150,30 +139,25 @@ namespace EESpender2
             var client = new System.Net.WebClient() { Proxy = null };
             dynamic format;
 
-            try
-            {
+            try {
                 format = JsonConvert.DeserializeObject(client.DownloadString("https://raw.githubusercontent.com/atillabyte/EESpender/master/Assets/shop.json"));
 
                 if (!File.Exists("shop.json"))
                     File.WriteAllText("shop.json", format.ToString());
-                else
-                {
+                else {
                     dynamic temp = JsonConvert.DeserializeObject(File.ReadAllText("shop.json"));
 
-                    if (format.version > temp.version)
-                    {
+                    if (format.version > temp.version) {
                         Program.Log(Program.Severity.Info, $"Updated Shop Format. (v.{format.version})");
                         File.WriteAllText("shop.json", format.ToString());
                     }
                 }
             }
-            catch (Exception ex)
-            {
+            catch (Exception ex) {
                 Program.Log(Program.Severity.Warning, $"Unable to update Shop Format. (ex: {ex.Message})");
             }
 
-            if (!File.Exists("shop.json"))
-            {
+            if (!File.Exists("shop.json")) {
                 Program.Log(Program.Severity.Error, "Shop Format not found.");
                 return;
             }
@@ -183,10 +167,8 @@ namespace EESpender2
             CurrentEnergy = e[Convert.ToUInt32(format.energy)];
             MaximumEnergy = e[Convert.ToUInt32(format.maximum)];
 
-            for (uint i = (uint)format.index.Value; i < e.Count; i += (uint)format.iterator.Value)
-            {
-                ShopItems.Add(new ShopItem()
-                {
+            for (uint i = (uint)format.index.Value; i < e.Count; i += (uint)format.iterator.Value) {
+                ShopItems.Add(new ShopItem() {
                     Name = e[(uint)i + Convert.ToUInt32(format.properties.id.Value)],
                     Price = e[(uint)i + Convert.ToUInt32(format.properties.price.Value)],
                     EnergyPerClick = e[(uint)i + Convert.ToUInt32(format.properties.increment.Value)],
