@@ -16,15 +16,48 @@ namespace EESpender2
 
         static void Main(string[] args)
         {
+            var required = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
+
             EasyTimer.SetTimeout(() => {
-                Log(Severity.Error, "Application took too long and was terminated.");
+                if (required.All(x => Messages.Select(m => m.Type).Contains(x))) {
+                    var shop = new Shop(Messages.First(x => x.Type == "getShop"));
+
+                    var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0 && x.Price > 0).OrderByDescending(x => x.Price - x.EnergySpent)
+                                   .OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Name.Contains("world")).Reverse().ToList();
+
+                    if (priority.Count() == 0)
+                        priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.OwnedAmount > 0 && x.Price > 0) };
+
+                    Log(Severity.Info, "Username: " + Messages.FirstOrDefault(x => x.Type == "getMySimplePlayerObject")[0]);
+                    Log(Severity.Info, "Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
+                    Log(Severity.Info, "Current Energy: " + shop.CurrentEnergy);
+                    Log(Severity.Info, "Maximum Energy: " + shop.MaximumEnergy);
+
+                    foreach (var message in Messages.Where(x => x.Type == "getLobbyProperties")) {
+                        var FirstDailyLogin = (bool)message[0];
+                        var LoginStreak = (int)message[1];
+
+                        if (FirstDailyLogin && LoginStreak >= 0)
+                            for (uint i = 2; i < message.Count; i += 2)
+                                Log(Severity.Info, $"Login Streak (#{LoginStreak}). (reward: {message[i + 1]} {message[i]})");
+                    }
+
+                    if (shop.CurrentEnergy >= priority[0].EnergyPerClick) {
+                        Log(Severity.Info, string.Format("Spending {0} energy on {1}",
+                                            priority[0].EnergyPerClick * (Math.Floor((double)shop.CurrentEnergy / priority[0].EnergyPerClick)),
+                                            priority[0].SafeName));
+
+                        Lobby.Send("useAllEnergy", priority[0].Name);
+                    }
+                } else {
+                    Log(Severity.Error, "Application took too long and was terminated.");
+                }
+
                 Environment.Exit(-1);
-            }, 1000 * 30);
+            }, 1000 * 10);
 
             System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
             System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
-
-            var required = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
 
             if (args == null || args.ToList().Count() == 0) {
                 Log(Severity.Error, "Unspecified account arguments.");
@@ -44,47 +77,9 @@ namespace EESpender2
                             if (!Messages.Any(x => x.Type == m))
                                 Lobby.Send(m);
                         }
-                    }), 2000);
+                    }), 100);
                 }
             };
-
-            EasyTimer.SetInterval(() => {
-                if (required.All(x => Messages.Select(m => m.Type).Contains(x))) {
-
-                    var shop = new Shop(Messages.First(x => x.Type == "getShop"));
-
-                    var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0 && x.Price > 0).OrderByDescending(x => x.Price - x.EnergySpent)
-                                   .OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Name.Contains("world")).Reverse().ToList();
-
-                    if (priority.Count() == 0)
-                        priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.OwnedAmount > 0 && x.Price > 0) };
-
-                    Log(Severity.Info, "Username: " + Messages.FirstOrDefault(x => x.Type == "getMySimplePlayerObject")[0]);
-                    Log(Severity.Info, "Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
-                    Log(Severity.Info, "Current Energy: " + shop.CurrentEnergy);
-                    Log(Severity.Info, "Maximum Energy: " + shop.MaximumEnergy);
-
-                    foreach(var message in Messages.Where(x => x.Type == "getLobbyProperties")) {
-                        var FirstDailyLogin = (bool)message[0];
-                        var LoginStreak = (int)message[1];
-
-                        if (FirstDailyLogin && LoginStreak >= 0)
-                            for (uint i = 2; i < message.Count; i += 2)
-                                Log(Severity.Info, $"Login Streak (#{LoginStreak}). (reward: {message[i + 1]} {message[i]})");
-                    }
-
-                    if (shop.CurrentEnergy >= priority[0].EnergyPerClick) {
-                        Log(Severity.Info, string.Format("Spending {0} energy on {1}",
-                                            priority[0].EnergyPerClick * (Math.Floor((double)shop.CurrentEnergy / priority[0].EnergyPerClick)),
-                                            priority[0].SafeName));
-
-                        Lobby.Send("useAllEnergy", priority[0].Name);
-                    }
-
-                    Log(Severity.Info, "Done.");
-                    Environment.Exit(0);
-                }
-            }, 5000);
 
             System.Threading.Thread.Sleep(-1);
         }
@@ -98,32 +93,6 @@ namespace EESpender2
             File.AppendAllText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToString("MM_dd_yy") }.txt", output + "\n");
 
             Console.WriteLine(output);
-        }
-    }
-
-    public static class EasyTimer
-    {
-        public static IDisposable SetInterval(Action method, int delayInMilliseconds)
-        {
-            System.Timers.Timer timer = new System.Timers.Timer(delayInMilliseconds);
-            timer.Elapsed += (source, e) => method();
-
-            timer.Enabled = true;
-            timer.Start();
-
-            return timer as IDisposable;
-        }
-
-        public static IDisposable SetTimeout(Action method, int delayInMilliseconds)
-        {
-            System.Timers.Timer timer = new System.Timers.Timer(delayInMilliseconds);
-            timer.Elapsed += (source, e) => method();
-
-            timer.AutoReset = false;
-            timer.Enabled = true;
-            timer.Start();
-
-            return timer as IDisposable;
         }
     }
 
@@ -191,6 +160,32 @@ namespace EESpender2
             public int EnergySpent { get; set; }
             public string SafeName { get; set; }
             public bool IsNew { get; set; }
+        }
+    }
+
+    static class EasyTimer
+    {
+        public static IDisposable SetInterval(Action method, int delayInMilliseconds)
+        {
+            System.Timers.Timer timer = new System.Timers.Timer(delayInMilliseconds);
+            timer.Elapsed += (source, e) => method();
+
+            timer.Enabled = true;
+            timer.Start();
+
+            return timer as IDisposable;
+        }
+
+        public static IDisposable SetTimeout(Action method, int delayInMilliseconds)
+        {
+            System.Timers.Timer timer = new System.Timers.Timer(delayInMilliseconds);
+            timer.Elapsed += (source, e) => method();
+
+            timer.AutoReset = false;
+            timer.Enabled = true;
+            timer.Start();
+
+            return timer as IDisposable;
         }
     }
 }
