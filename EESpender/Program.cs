@@ -18,6 +18,11 @@ namespace EESpender2
         static void Main(string[] args)
         {
             EasyTimer.SetTimeout(new Action(() => {
+                foreach (var instance in UserInstances) {
+                    instance.LogOutput();
+                }
+
+                LogLineBreak();
                 Log(Severity.Error, "Application took too long and was terminated.");
                 Environment.Exit(-1);
             }), 1000 * 30);
@@ -33,12 +38,15 @@ namespace EESpender2
             for(int i = 0; i < args.Length; i += 2)
                 UserInstances.Add(new UserIntance(args[i], args[i + 1]));
 
-            while(UserInstances.All(x => !x.Completed)) {
+            while (UserInstances.All(x => !x.Completed)) {
                 Thread.Sleep(100);
             }
 
-            Environment.Exit(0);
+            foreach (var instance in UserInstances)
+                instance.LogOutput();
+            LogLineBreak();
 
+            Environment.Exit(0);
             Thread.Sleep(Timeout.Infinite);
         }
     }
@@ -49,8 +57,11 @@ namespace EESpender2
         public Connection Lobby { get; set; }
         public List<string> RequiredMessageTypes = new List<string>() { "getMySimplePlayerObject", "getLobbyProperties", "getShop" };
         public List<Message> ReceivedMessages = new List<Message>();
+        public List<string> Output = new List<string>();
 
         public bool Completed = false;
+        public string Username = "Unspecified";
+
         public UserIntance(string email, string auth)
         {
             this.Client = new RabbitAuth().LogOn("everybody-edits-su9rn58o40itdbnw69plyw", email, auth);
@@ -58,12 +69,12 @@ namespace EESpender2
 
             this.Lobby.OnMessage += (s, e) => {
                 ReceivedMessages.Add(e);
-
-                if (e.Type == "connectioncomplete")
-                    this.Start();
             };
 
             Helpers.Log(Severity.Info, "EESpender Started.");
+            Thread.Sleep(1000);
+
+            this.Start();
         }
 
         public void Start()
@@ -72,25 +83,25 @@ namespace EESpender2
                 this.Lobby.Send(Message.Create(type));
                 Thread.Sleep(100);
             }
-
+            
             EasyTimer.SetTimeout(new Action(() => {
-                var hasAll = RequiredMessageTypes.All(y => ReceivedMessages.Select(x => x.Type).Contains(y));
-
-                while (!hasAll) {
-                    Thread.Sleep(100);
+                while (!RequiredMessageTypes.All(y => ReceivedMessages.Select(x => x.Type).Contains(y))) {
+                    Thread.Sleep(200);
                 }
+
+                this.Username = (string)ReceivedMessages.FirstOrDefault(x => x.Type == "getMySimplePlayerObject")[0];
 
                 var shop = new Shop(ReceivedMessages.First(x => x.Type == "getShop"));
                 var priority = shop.ShopItems.Where(x => x.OwnedAmount == 0 && x.Price > 0).OrderByDescending(x => x.Price - x.EnergySpent)
                                .OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Name.Contains("world")).Reverse().ToList();
 
                 if (priority.Count() == 0)
-                    priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.OwnedAmount > 0 && x.Price > 0) };
+                    priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.Price > 0) };
 
-                Log(Severity.Info, "Username: " + ReceivedMessages.FirstOrDefault(x => x.Type == "getMySimplePlayerObject")[0]);
-                Log(Severity.Info, "Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
-                Log(Severity.Info, "Current Energy: " + shop.CurrentEnergy);
-                Log(Severity.Info, "Maximum Energy: " + shop.MaximumEnergy);
+                Output.Add("Username: " +  this.Username);
+                Output.Add("Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
+                Output.Add("Current Energy: " + shop.CurrentEnergy);
+                Output.Add("Maximum Energy: " + shop.MaximumEnergy);
 
                 foreach (var message in ReceivedMessages.Where(x => x.Type == "getLobbyProperties")) {
                     var FirstDailyLogin = (bool)message[0];
@@ -98,19 +109,27 @@ namespace EESpender2
 
                     if (FirstDailyLogin && LoginStreak >= 0)
                         for (uint i = 2; i < message.Count; i += 2)
-                            Log(Severity.Info, $"Login Streak (#{LoginStreak}). (reward: {message[i + 1]} {message[i]})");
+                            Output.Add($"Login Streak (#{LoginStreak}). (reward: {message[i + 1]} {message[i]})");
                 }
 
                 if (shop.CurrentEnergy >= priority[0].EnergyPerClick) {
-                    Log(Severity.Info, string.Format("Spending {0} energy on {1}",
+                    Output.Add(string.Format("Spending {0} energy on {1}",
                                         priority[0].EnergyPerClick * (Math.Floor((double)shop.CurrentEnergy / priority[0].EnergyPerClick)),
                                         priority[0].SafeName));
 
                     Lobby.Send("useAllEnergy", priority[0].Name);
                 }
-
                 Completed = true;
             }), 5000);
+        }
+
+        public void LogOutput()
+        {
+            if (!this.Output.ToArray().IsNullOrEmpty()) {
+                LogLineBreak();
+                foreach (var message in this.Output)
+                    Log(Severity.Info, message);
+            }
         }
     }
 
@@ -192,6 +211,10 @@ namespace EESpender2
             File.AppendAllText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToString("MM_dd_yy") }.txt", output + "\n");
 
             Console.WriteLine(output);
+        }
+        public static void LogLineBreak()
+        {
+            Log(Severity.Info, "--------------------------------------------------------");
         }
 
         public static bool IsNullOrEmpty<T>(this T[] array)
