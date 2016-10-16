@@ -2,7 +2,7 @@
 A tool that automatically collects login rewards, and spends energy on the newest items in the Energy Shop.
 
 [![GitHub issues](https://img.shields.io/github/issues/atillabyte/EESpender.svg)](https://github.com/atillabyte/EESpender/issues)
-[![Version](https://img.shields.io/badge/version-2.0.7-blue.svg)](https://github.com/atillabyte/EESpender/releases)
+[![Version](https://img.shields.io/badge/version-2.0.8-blue.svg)](https://github.com/atillabyte/EESpender/releases)
 
 # Using EESpender
 
