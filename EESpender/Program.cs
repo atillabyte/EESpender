@@ -1,11 +1,11 @@
-﻿using PlayerIOClient;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Diagnostics;
 using System.Threading;
 using System.Linq;
+using PlayerIOClient;
 using Newtonsoft.Json;
 using Rabbit;
 using static EESpender2.Helpers;
@@ -23,24 +23,30 @@ namespace EESpender2
                 }
 
                 LogLineBreak();
-                Log(Severity.Error, "Application took too long and was terminated.");
-                Environment.Exit(-1);
+                Log(Severity.Error, "Application took too long and was terminated.", true);
             }), 1000 * 30);
 
             ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
             Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
 
-            if (args.IsNullOrEmpty())
-                throw new ArgumentException("No accounts specified.");
-            else if (args.Length % 2 == 1)
-                throw new ArgumentException("Missing a required account argument.");
+            if (File.Exists("accounts.dat")) {
+                if (args.Length > 0)
+                    Log(Severity.Warning, "You must only either provide accounts as arguments or within 'accounts.dat', defaulting to 'accounts.dat'.");
 
-            for(int i = 0; i < args.Length; i += 2)
+                args = File.ReadAllText(@"accounts.dat").Split(' ');
+            }
+
+            if (args.IsNullOrEmpty())
+                Log(Severity.Error, "No accounts specified.", true);
+
+            if (args.Length % 2 == 1)
+                Log(Severity.Error, "Missing a required account argument.", true);
+
+            for (int i = 0; i < args.Length; i += 2)
                 UserInstances.Add(new UserIntance(args[i], args[i + 1]));
 
-            while (UserInstances.All(x => !x.Completed)) {
+            while (UserInstances.All(x => !x.Completed))
                 Thread.Sleep(100);
-            }
 
             foreach (var instance in UserInstances)
                 instance.LogOutput();
@@ -64,12 +70,18 @@ namespace EESpender2
 
         public UserIntance(string email, string auth)
         {
-            this.Client = new RabbitAuth().LogOn("everybody-edits-su9rn58o40itdbnw69plyw", email, auth);
-            this.Lobby = Client.Multiplayer.CreateJoinRoom(Client.ConnectUserId, $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
+            try {
+                this.Client = new RabbitAuth().LogOn("everybody-edits-su9rn58o40itdbnw69plyw", email, auth);
+            }
+            catch (Exception ex) {
+                Log(Severity.Error, $"Authentication failed. ({ex.Message})");
+                Completed = true;
 
-            this.Lobby.OnMessage += (s, e) => {
-                ReceivedMessages.Add(e);
-            };
+                return;
+            }
+
+            this.Lobby = Client.Multiplayer.CreateJoinRoom(Client.ConnectUserId, $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
+            this.Lobby.OnMessage += (s, e) => ReceivedMessages.Add(e);
 
             Helpers.Log(Severity.Info, "EESpender Started.");
             Thread.Sleep(1000);
@@ -96,12 +108,11 @@ namespace EESpender2
                                .OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Name.Contains("world")).Reverse().ToList();
 
                 if (priority.Count() == 0)
-                    priority = new List<Shop.ShopItem>() { shop.ShopItems.OrderByDescending(x => x.IsNew).First(x => x.Price > 0) };
+                    priority = shop.ShopItems.OrderByDescending(x => x.IsNew).OrderByDescending(x => x.Name.StartsWith("world")).Where(x => x.Price - x.EnergySpent > 0).ToList();
 
                 Output.Add("Username: " +  this.Username);
                 Output.Add("Priority Items: " + string.Join(", ", priority.Take(5).Select(x => x.Name)));
-                Output.Add("Current Energy: " + shop.CurrentEnergy);
-                Output.Add("Maximum Energy: " + shop.MaximumEnergy);
+                Output.Add("Current Energy: " + $"{shop.CurrentEnergy}/{shop.MaximumEnergy}");
 
                 foreach (var message in ReceivedMessages.Where(x => x.Type == "getLobbyProperties")) {
                     var FirstDailyLogin = (bool)message[0];
@@ -143,7 +154,7 @@ namespace EESpender2
         public Shop(Message e)
         {
             var client = new System.Net.WebClient() { Proxy = null };
-            dynamic format;
+            dynamic format = null;
 
             try {
                 format = JsonConvert.DeserializeObject(client.DownloadString("https://raw.githubusercontent.com/atillabyte/EESpender/master/Assets/shop.json"));
@@ -167,8 +178,6 @@ namespace EESpender2
                 Log(Severity.Error, "Shop Format not found.");
                 return;
             }
-
-            format = JsonConvert.DeserializeObject(File.ReadAllText("shop.json"));
 
             CurrentEnergy = e[Convert.ToUInt32(format.energy)];
             MaximumEnergy = e[Convert.ToUInt32(format.maximum)];
@@ -203,7 +212,7 @@ namespace EESpender2
     static class Helpers
     {
         public enum Severity { Info = 0, Warning = 1, Error = 2 }
-        public static void Log(Severity severity, string message)
+        public static void Log(Severity severity, string message, bool terminate = false)
         {
             var output = string.Format("[{0}] [{1:G}] {2}", severity.ToString().ToUpper(), DateTime.Now, message);
 
@@ -211,17 +220,15 @@ namespace EESpender2
             File.AppendAllText("logs" + Path.AltDirectorySeparatorChar + $"eespender_{ DateTime.Now.ToString("MM_dd_yy") }.txt", output + "\n");
 
             Console.WriteLine(output);
-        }
-        public static void LogLineBreak()
-        {
-            Log(Severity.Info, "--------------------------------------------------------");
+
+            if (terminate)
+                Environment.Exit(-1);
         }
 
-        public static bool IsNullOrEmpty<T>(this T[] array)
-        {
-            return array == null || array.Length == 0;
-        }
+        public static void LogLineBreak() => Log(Severity.Info, "--------------------------------------------------------");
+        public static bool IsNullOrEmpty<T>(this T[] array) => array == null || array.Length == 0;
     }
+
     static class EasyTimer
     {
         public static IDisposable SetInterval(Action method, int delayInMilliseconds)
