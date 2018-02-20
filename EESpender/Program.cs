@@ -80,7 +80,8 @@ namespace EESpender2
                 return;
             }
 
-            this.Lobby = Client.Multiplayer.CreateJoinRoom(Client.ConnectUserId, $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
+            //lobby rooms require '_aaaaa"
+            this.Lobby = Client.Multiplayer.CreateJoinRoom($"{Client.ConnectUserId}_{Guid.NewGuid().ToString().Substring(0, 5)}", $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
             this.Lobby.OnMessage += (s, e) => ReceivedMessages.Add(e);
 
             Helpers.Log(Severity.Info, "EESpender Started.");
