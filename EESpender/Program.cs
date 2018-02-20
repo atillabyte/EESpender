@@ -80,14 +80,23 @@ namespace EESpender2
                 return;
             }
 
-            //lobby rooms require '_aaaaa"
             this.Lobby = Client.Multiplayer.CreateJoinRoom($"{Client.ConnectUserId}_{Guid.NewGuid().ToString().Substring(0, 5)}", $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
-            this.Lobby.OnMessage += (s, e) => ReceivedMessages.Add(e);
+            this.Lobby.OnMessage += (s2, e2) => { if(e2.Type == "LobbyTo") {
+                this.Lobby = Client.Multiplayer.CreateJoinRoom(e2.GetString(0), $"Lobby{Client.BigDB.Load("config", "config")["version"]}", true, null, null);
+                this.Lobby.OnMessage += (s, e) => ReceivedMessages.Add(e); 
+            
+                Helpers.Log(Severity.Info, "EESpender Started.");
+                Thread.Sleep(1000);
 
-            Helpers.Log(Severity.Info, "EESpender Started.");
-            Thread.Sleep(1000);
+                this.Start();
+            } else if (e2.Type == "connectioncomplete") {
+					this.Lobby.OnMessage += (s, e) => { eceivedMessages.Add(e); };
 
-            this.Start();
+					Helpers.Log(Severity.Info, "EESpender Started.");
+					Thread.Sleep(1000);
+
+					this.Start();
+				} };
         }
 
         public void Start()
